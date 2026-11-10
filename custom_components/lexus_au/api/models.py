@@ -219,6 +219,14 @@ class LexusAUSnapshot:
     vehicle: LexusAUVehicleOverview
     status: LexusAUStatus
     refresh_request: dict[str, Any] | None = None
+    climate_status: dict[str, Any] | None = None
+    climate_settings: dict[str, Any] | None = None
+    electric_status: dict[str, Any] | None = None
+    vehicle_health: dict[str, Any] | None = None
+    service_history: list[dict[str, Any]] = field(default_factory=list)
+    notifications: list[dict[str, Any]] = field(default_factory=list)
+    recent_trips: list[dict[str, Any]] = field(default_factory=list)
+    trip_summary: dict[str, Any] | None = None
 
 
 def _status_payload(payload: dict[str, Any]) -> dict[str, Any]:

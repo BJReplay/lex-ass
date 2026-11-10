@@ -11,6 +11,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -103,6 +104,22 @@ ENGINE_BINARY_SENSORS: tuple[BinarySensorEntityDescription, ...] = (
     ),
 )
 
+VEHICLE_HEALTH_DESCRIPTION = BinarySensorEntityDescription(
+    key="vehicle_health",
+    translation_key="vehicle_health",
+    device_class=BinarySensorDeviceClass.PROBLEM,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    icon="mdi:car-wrench",
+)
+
+DRIVING_DESCRIPTION = BinarySensorEntityDescription(
+    key="driving",
+    translation_key="driving",
+    device_class=BinarySensorDeviceClass.MOVING,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    icon="mdi:car-brake-parking",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -121,6 +138,8 @@ async def async_setup_entry(
                 LexusAUEngineRunningBinarySensor(coordinator, description)
                 for description in ENGINE_BINARY_SENSORS
             ),
+            LexusAUVehicleHealthBinarySensor(coordinator, VEHICLE_HEALTH_DESCRIPTION),
+            LexusAUDrivingStatusBinarySensor(coordinator, DRIVING_DESCRIPTION),
         ]
     )
 
@@ -169,3 +188,61 @@ class LexusAUEngineRunningBinarySensor(LexusAUEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         """Return true when remote engine status reports running."""
         return self.coordinator.data.status.engine_running
+
+
+class LexusAUVehicleHealthBinarySensor(LexusAUEntity, BinarySensorEntity):
+    """Report whether the health endpoint lists active vehicle warnings."""
+
+    entity_description: BinarySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: LexusAUCoordinator,
+        description: BinarySensorEntityDescription,
+    ) -> None:
+        """Initialize the health sensor."""
+        super().__init__(coordinator, description.key)
+        self.entity_description = description
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true for reported warnings and unknown for absent data."""
+        health = self.coordinator.data.vehicle_health
+        if health is None:
+            return None
+        warnings = health.get("warning")
+        return len(warnings) > 0 if isinstance(warnings, list) else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        """Expose the warning objects returned by the health endpoint."""
+        health = self.coordinator.data.vehicle_health
+        warnings = health.get("warning") if health else None
+        return {"warnings": warnings} if isinstance(warnings, list) else None
+
+
+class LexusAUDrivingStatusBinarySensor(LexusAUEntity, BinarySensorEntity):
+    """Infer whether the odometer advanced between successful polls."""
+
+    entity_description: BinarySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: LexusAUCoordinator,
+        description: BinarySensorEntityDescription,
+    ) -> None:
+        """Initialize the driving status sensor."""
+        super().__init__(coordinator, description.key)
+        self.entity_description = description
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return movement inferred from consecutive odometer values."""
+        return self.coordinator._driving_since_last_poll
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Explain that this is a poll-based signal, not live vehicle state."""
+        return {
+            "note": "Reports whether the odometer advanced since the previous successful poll; this is not a live driving signal."
+        }

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 import logging
 import random
+import re
+from collections.abc import Callable
+from datetime import timedelta
 from time import monotonic
-from typing import Callable
+from typing import Any
 
 import httpx
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import LexusAUAuthError, LexusAUClient, LexusAURequestError, LexusAUSnapshot
@@ -30,6 +32,42 @@ LOGGER = logging.getLogger(__name__)
 SnapshotPredicate = Callable[[LexusAUSnapshot], bool]
 
 
+def _seat_write_options(options: dict[str, Any]) -> dict[str, str]:
+    """Translate reported seat levels into climate-control write modes."""
+    result: dict[str, str] = {}
+    for key, value in options.items():
+        if value == "off":
+            result[key] = "off"
+        elif value in {"low", "medium", "high", "heater"}:
+            result[key] = "heater"
+        elif value == "ventilation":
+            result[key] = value
+    return result
+
+
+def _climate_command_failed(response: dict[str, Any]) -> bool:
+    if response.get("errors"):
+        return True
+    payload = response.get("payload")
+    return_code = payload.get("returnCode") if isinstance(payload, dict) else None
+    if return_code is not None and return_code != "000000":
+        return True
+    status = response.get("status")
+    if isinstance(status, str):
+        return status.lower() in {"error", "failed", "rejected"}
+    if isinstance(status, dict):
+        messages = status.get("messages")
+        if isinstance(messages, list):
+            return any(
+                isinstance(message, dict)
+                and isinstance(message.get("responseCode"), str)
+                and re.search(r"(?<!\d)[45]\d{2}(?!\d)", message["responseCode"])
+                is not None
+                for message in messages
+            )
+    return False
+
+
 class LexusAUCoordinator(DataUpdateCoordinator[LexusAUSnapshot]):
     """Coordinate Lexus Australia status polling and commands."""
 
@@ -43,6 +81,8 @@ class LexusAUCoordinator(DataUpdateCoordinator[LexusAUSnapshot]):
         self.entry = entry
         self.client = client
         self._command_confirmation_task: asyncio.Task | None = None
+        self._last_odometer: float | None = None
+        self._driving_since_last_poll: bool | None = None
         self._base_refresh_interval_seconds = entry.options.get(
             CONF_REFRESH_INTERVAL_SECONDS,
             DEFAULT_REFRESH_INTERVAL_SECONDS,
@@ -71,6 +111,14 @@ class LexusAUCoordinator(DataUpdateCoordinator[LexusAUSnapshot]):
             self._apply_next_background_poll(success=False)
             raise UpdateFailed(str(err)) from err
         else:
+            odometer = snapshot.status.odometer
+            if odometer is not None:
+                self._driving_since_last_poll = (
+                    None
+                    if self._last_odometer is None
+                    else odometer > self._last_odometer
+                )
+                self._last_odometer = odometer
             self._apply_next_background_poll(success=True)
             return snapshot
 
@@ -78,6 +126,56 @@ class LexusAUCoordinator(DataUpdateCoordinator[LexusAUSnapshot]):
         """Request a fresh upload from the vehicle, then refresh coordinator data."""
         await self._async_request_remote_refresh()
         await self.async_request_refresh()
+
+    async def async_refresh_electric_realtime_status(self) -> None:
+        """Request fresh electric data and update coordinator state."""
+        await self.client.async_refresh_electric_realtime_status()
+        await self.async_request_refresh()
+
+    async def async_refresh_recent_trips(self) -> None:
+        """Fetch fresh trip history and update coordinator state."""
+        await self.client.async_refresh_recent_trips()
+        await self.async_request_refresh()
+
+    async def async_set_climate(self, body: dict[str, Any]) -> None:
+        """Send a climate command and reject an explicit backend failure."""
+        response = await self.client.async_set_climate(body)
+        if _climate_command_failed(response):
+            raise HomeAssistantError("Lexus rejected the climate-control command.")
+        try:
+            await self.client.async_refresh_climate_status()
+        except (LexusAURequestError, httpx.HTTPError) as err:
+            LOGGER.debug("Climate status refresh request failed: %s", err)
+        await self.async_request_refresh()
+
+    async def async_apply_climate_settings(
+        self,
+        *,
+        heating_overrides: dict[str, str] | None = None,
+        seat_overrides: dict[str, str] | None = None,
+        temperature_override: dict[str, Any] | None = None,
+    ) -> None:
+        """Start climate with current settings preserved and requested overrides."""
+        settings = self.data.climate_settings or {}
+        body: dict[str, Any] = {
+            "command": "start",
+            "duration": settings.get("duration"),
+            "temperature": temperature_override or settings.get("temperature"),
+            "heatingOptions": dict(settings.get("heatingOptions") or {}),
+            "seatOptions": _seat_write_options(
+                dict(settings.get("seatOptions") or {})
+            ),
+            "saveSettings": True,
+        }
+        body["heatingOptions"].update(heating_overrides or {})
+        body["seatOptions"].update(seat_overrides or {})
+        await self.async_set_climate(
+            {key: value for key, value in body.items() if value is not None}
+        )
+
+    async def async_stop_climate(self) -> None:
+        """Stop remote climate control."""
+        await self.async_set_climate({"command": "stop"})
 
     async def async_shutdown(self) -> None:
         """Cancel outstanding background work."""

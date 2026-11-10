@@ -19,6 +19,41 @@ SENSITIVE_KEYS = {
     "x-guid",
     "deviceid",
     "device_id",
+    "latitude",
+    "longitude",
+    "lat",
+    "lon",
+    "startlat",
+    "startlon",
+    "endlat",
+    "endlon",
+    "route",
+    "location",
+    "vehiclelocation",
+    "message",
+    "notifications",
+    "notes",
+    "servicingdealer",
+    "serviceprovider",
+}
+
+FULLY_REDACTED_KEYS = {
+    "latitude",
+    "longitude",
+    "lat",
+    "lon",
+    "startlat",
+    "startlon",
+    "endlat",
+    "endlon",
+    "route",
+    "location",
+    "vehiclelocation",
+    "message",
+    "notifications",
+    "notes",
+    "servicingdealer",
+    "serviceprovider",
 }
 
 
@@ -37,7 +72,11 @@ def redact_mapping(payload: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in payload.items():
         normalized_key = key.lower().replace("-", "_")
         if normalized_key in SENSITIVE_KEYS:
-            redacted[key] = redact_value(str(value))
+            redacted[key] = (
+                "**REDACTED**"
+                if normalized_key in FULLY_REDACTED_KEYS
+                else redact_value(str(value))
+            )
             continue
 
         if isinstance(value, Mapping):

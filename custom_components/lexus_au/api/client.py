@@ -10,7 +10,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import httpx
 
@@ -25,6 +25,10 @@ from .const import (
     BRAND,
     CHANNEL,
     CLIENT_ID,
+    CLIMATE_CONTROL_PATH,
+    CLIMATE_SETTINGS_PATH,
+    CLIMATE_STATUS_PATH,
+    CLIMATE_STATUS_REFRESH_PATH,
     COMMAND_BUZZER_WARNING,
     COMMAND_DOOR_LOCK,
     COMMAND_DOOR_UNLOCK,
@@ -43,7 +47,11 @@ from .const import (
     DEVICE_STATUS_PATH,
     DEVICE_TIMEZONE,
     DEVICE_TYPE,
+    ELECTRIC_COMMAND_PATH,
+    ELECTRIC_REALTIME_REFRESH_PATH,
+    ELECTRIC_STATUS_PATH,
     LOCALE,
+    NOTIFICATION_HISTORY_PATH,
     OPENIDM_BASE_URL,
     OS_NAME,
     OS_VERSION,
@@ -53,11 +61,15 @@ from .const import (
     REMOTE_ENGINE_STATUS_PATH,
     REMOTE_REFRESH_PATH,
     REMOTE_STATUS_PATH,
+    SERVICE_HISTORY_PATH,
     TELEMETRY_V2_PATH,
     TELEMETRY_V3_PATH,
     TOKEN_BASIC_AUTH,
+    TRIP_DETAIL_PATH,
+    TRIPS_PATH,
     USER_AGENT,
     VEHICLE_GUID_PATH,
+    VEHICLE_HEALTH_PATH,
     VEHICLE_LOCATION_PATH,
 )
 from .exceptions import LexusAUAuthError, LexusAUProtocolError, LexusAURequestError
@@ -69,6 +81,15 @@ LOGGER = logging.getLogger(__name__)
 _PKCE_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 _TRIAL_HAZARD_FLASH_DURATION_SECONDS = 1.0
 _TRIAL_HEADLIGHT_FLASH_DURATION_SECONDS = 1.0
+_ENDPOINT_CACHE_TTLS = {
+    CLIMATE_STATUS_PATH: 120,
+    CLIMATE_SETTINGS_PATH: 120,
+    ELECTRIC_STATUS_PATH: 300,
+    VEHICLE_HEALTH_PATH: 1800,
+    NOTIFICATION_HISTORY_PATH: 3600,
+    SERVICE_HISTORY_PATH: 86400,
+}
+_TRIPS_CACHE_TTL_SECONDS = 1800
 _UNSET = object()
 
 
@@ -84,6 +105,7 @@ class LexusAUClient:
         device_id: str,
         api_key: str,
         x_api_key: str,
+        recent_trips_limit: int = 1,
         timeout: float = 30.0,
     ) -> None:
         """Initialize the Lexus AU client."""
@@ -93,6 +115,7 @@ class LexusAUClient:
         self._device_id = device_id
         self._api_key = api_key
         self._x_api_key = x_api_key
+        self._recent_trips_limit = min(max(recent_trips_limit, 1), 20)
         self._timeout = timeout
 
         self._http = httpx.AsyncClient(
@@ -106,6 +129,8 @@ class LexusAUClient:
         self._telemetry_path: str | object = _UNSET
         self._location_supported = True
         self._engine_status_supported = True
+        self._endpoint_cache: dict[str, tuple[datetime, dict[str, Any]]] = {}
+        self._last_command_result: dict[str, str] | None = None
 
     async def async_close(self) -> None:
         """Close underlying HTTP resources."""
@@ -121,6 +146,11 @@ class LexusAUClient:
         """Return the configured VIN."""
         return self._vin
 
+    @property
+    def last_command_result(self) -> dict[str, str] | None:
+        """Return minimal metadata for the last command, excluding its response."""
+        return self._last_command_result.copy() if self._last_command_result else None
+
     async def async_test_connection(self) -> LexusAUStatus:
         """Validate credentials and status access."""
         return await self.async_get_remote_status()
@@ -130,8 +160,28 @@ class LexusAUClient:
         status = await self.async_get_remote_status()
 
         await self._async_ensure_vehicle_overview()
+        climate_status = await self._async_get_optional_payload(CLIMATE_STATUS_PATH)
+        climate_settings = await self._async_get_optional_payload(CLIMATE_SETTINGS_PATH)
+        electric_status = await self._async_get_optional_payload(ELECTRIC_STATUS_PATH)
+        vehicle_health = await self._async_get_optional_payload(VEHICLE_HEALTH_PATH)
+        notifications_payload = await self._async_get_optional_payload(
+            NOTIFICATION_HISTORY_PATH
+        )
+        service_payload = await self._async_get_optional_payload(SERVICE_HISTORY_PATH)
+        recent_trips, trip_summary = await self.async_get_recent_trips()
 
-        return LexusAUSnapshot(vehicle=self._vehicle_overview, status=status)
+        return LexusAUSnapshot(
+            vehicle=self._vehicle_overview,
+            status=status,
+            climate_status=climate_status,
+            climate_settings=climate_settings,
+            electric_status=electric_status,
+            vehicle_health=vehicle_health,
+            service_history=_list_field(service_payload, "serviceHistories"),
+            notifications=_list_field(notifications_payload, "notifications"),
+            recent_trips=recent_trips,
+            trip_summary=trip_summary,
+        )
 
     async def async_get_vehicle_overview(self) -> LexusAUVehicleOverview:
         """Fetch vehicle metadata and cache it."""
@@ -144,6 +194,129 @@ class LexusAUClient:
             payload, self._vin
         )
         return self._vehicle_overview
+
+    async def async_refresh_electric_realtime_status(self) -> dict[str, Any]:
+        """Request a fresh electric status upload."""
+        response = await self._async_command_request(
+            "electric status refresh",
+            ELECTRIC_REALTIME_REFRESH_PATH,
+        )
+        self._endpoint_cache.pop(ELECTRIC_STATUS_PATH, None)
+        return response
+
+    async def async_refresh_climate_status(self) -> dict[str, Any]:
+        """Request a fresh climate status upload."""
+        response = await self._async_command_request(
+            "climate status refresh",
+            CLIMATE_STATUS_REFRESH_PATH,
+        )
+        self._endpoint_cache.pop(CLIMATE_STATUS_PATH, None)
+        return response
+
+    async def async_set_climate(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Send the unified climate start/stop request."""
+        command = str(body.get("command", "climate"))
+        response = await self._async_command_request(
+            f"climate {command}",
+            CLIMATE_CONTROL_PATH,
+            json_body=body,
+        )
+        self._endpoint_cache.pop(CLIMATE_STATUS_PATH, None)
+        self._endpoint_cache.pop(CLIMATE_SETTINGS_PATH, None)
+        return response
+
+    async def async_send_charging_command(
+        self, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Send a supported charging-control request."""
+        response = await self._async_command_request(
+            "charging control",
+            ELECTRIC_COMMAND_PATH,
+            json_body=body,
+        )
+        self._endpoint_cache.pop(ELECTRIC_STATUS_PATH, None)
+        return response
+
+    async def async_get_recent_trips(
+        self, *, limit: int | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Return recent trip summaries with route details when available."""
+        limit = self._recent_trips_limit if limit is None else min(max(limit, 1), 20)
+        today = datetime.now().astimezone().date()
+        query = urlencode(
+            {
+                "from": today - timedelta(days=90),
+                "to": today,
+                "summary": "true",
+                "limit": min(max(limit, 1), 20),
+                "offset": 0,
+            }
+        )
+        response = await self._async_get_cached(
+            f"{TRIPS_PATH}?{query}", _TRIPS_CACHE_TTL_SECONDS
+        )
+        payload = _payload_object(response)
+        trips = payload.get("trips")
+        summaries = payload.get("summary")
+        if not isinstance(trips, list):
+            return [], _latest_summary(summaries)
+
+        detailed_trips: list[dict[str, Any]] = []
+        for trip in trips[:limit]:
+            if not isinstance(trip, dict):
+                continue
+            trip_id = trip.get("id")
+            if not isinstance(trip_id, str) or not trip_id:
+                detailed_trips.append(trip)
+                continue
+            detail_path = TRIP_DETAIL_PATH.format(trip_id=quote(trip_id, safe=""))
+            detail_response = await self._async_get_cached(
+                detail_path, _TRIPS_CACHE_TTL_SECONDS
+            )
+            detail = _payload_object(detail_response)
+            detailed_trips.append({**trip, **detail} if detail else trip)
+
+        return detailed_trips, _latest_summary(summaries)
+
+    async def async_refresh_recent_trips(
+        self, *, limit: int | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Bypass trip caches and fetch a fresh recent-trip snapshot."""
+        for path in list(self._endpoint_cache):
+            if path.startswith((TRIPS_PATH, TRIP_DETAIL_PATH.split("{")[0])):
+                self._endpoint_cache.pop(path, None)
+        return await self.async_get_recent_trips(limit=limit)
+
+    async def _async_get_optional_payload(
+        self, path: str
+    ) -> dict[str, Any] | None:
+        """Fetch an optional endpoint and unwrap its payload object."""
+        response = await self._async_get_cached(path, _ENDPOINT_CACHE_TTLS[path])
+        return _payload_object(response) if response else None
+
+    async def _async_get_cached(
+        self, path: str, ttl_seconds: int
+    ) -> dict[str, Any] | None:
+        """Fetch and cache an optional GET endpoint without failing status polling."""
+        now = datetime.now(UTC)
+        cached = self._endpoint_cache.get(path)
+        if cached and now - cached[0] < timedelta(seconds=ttl_seconds):
+            return cached[1] or None
+
+        try:
+            response = await self._async_api_request(
+                "GET",
+                path,
+                include_vin_header=True,
+                extra_headers=self._vehicle_metadata_headers(),
+            )
+        except (LexusAURequestError, LexusAUProtocolError, httpx.HTTPError) as err:
+            LOGGER.debug("Optional AU endpoint %s failed: %s", path, err)
+            self._endpoint_cache[path] = (now, {})
+            return None
+
+        self._endpoint_cache[path] = (now, response)
+        return response
 
     async def async_get_remote_status(self) -> LexusAUStatus:
         """Return the last known remote vehicle status."""
@@ -294,12 +467,44 @@ class LexusAUClient:
         if value is not None:
             body["value"] = value
 
-        return await self._async_api_request(
-            "POST",
+        return await self._async_command_request(
+            command,
             REMOTE_COMMAND_PATH,
-            include_vin_header=True,
             json_body=body,
         )
+
+    async def _async_command_request(
+        self,
+        command: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send a remote action and retain only privacy-safe outcome metadata."""
+        requested_at = datetime.now(UTC).isoformat()
+        try:
+            response = await self._async_api_request(
+                "POST",
+                path,
+                include_vin_header=True,
+                extra_headers=self._vehicle_metadata_headers(),
+                json_body=json_body,
+            )
+        except Exception as err:
+            self._last_command_result = {
+                "command": command,
+                "requested_at": requested_at,
+                "outcome": "failed",
+                "error_type": type(err).__name__,
+            }
+            raise
+
+        self._last_command_result = {
+            "command": command,
+            "requested_at": requested_at,
+            "outcome": "accepted",
+        }
+        return response
 
     async def _async_get_telemetry_best_effort(self) -> dict[str, Any] | None:
         """Fetch telemetry from the first working known endpoint, if any."""
@@ -832,6 +1037,74 @@ def _payload_section(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(nested_payload, dict):
         return nested_payload
     return payload
+
+
+def _payload_object(response: dict[str, Any] | None) -> dict[str, Any]:
+    if not response:
+        return {}
+    return _payload_section(response)
+
+
+def _list_field(payload: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:
+    value = payload.get(key) if payload else None
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _latest_summary(summaries: Any) -> dict[str, Any] | None:
+    if not isinstance(summaries, list):
+        return None
+    today = datetime.now().astimezone().date()
+    week_start = today - timedelta(days=6)
+    daily_summaries: list[tuple[Any, dict[str, Any]]] = []
+    for period in reversed(summaries):
+        if not isinstance(period, dict):
+            continue
+        histograms = period.get("histograms")
+        if isinstance(histograms, list) and histograms:
+            year, month = period.get("year"), period.get("month")
+            for histogram in histograms:
+                if not isinstance(histogram, dict) or not isinstance(
+                    histogram.get("summary"), dict
+                ):
+                    continue
+                day = histogram.get("day")
+                if (
+                    not isinstance(year, int)
+                    or not isinstance(month, int)
+                    or not isinstance(day, int)
+                ):
+                    continue
+                try:
+                    histogram_date = datetime(year, month, day).date()
+                except ValueError:
+                    continue
+                if week_start <= histogram_date <= today:
+                    daily_summaries.append((histogram_date, histogram["summary"]))
+        summary = period.get("summary")
+        if isinstance(summary, dict) and not daily_summaries:
+            daily_summaries.append((today, summary))
+
+    total_distance = sum(
+        value["length"]
+        for _, value in daily_summaries
+        if isinstance(value.get("length"), (int, float))
+    )
+    total_duration = sum(
+        value["duration"]
+        for _, value in daily_summaries
+        if isinstance(value.get("duration"), (int, float))
+    )
+    if total_duration > 0 and total_distance > 0:
+        return {
+            "averageSpeed": total_distance / total_duration * 3.6,
+            "averageSpeedUnit": "km/h",
+            "days_included": len(daily_summaries),
+        }
+    if daily_summaries:
+        return daily_summaries[-1][1]
+    return None
 
 
 def _merge_payload_sections(

@@ -30,6 +30,18 @@ BUTTONS: tuple[LexusAUButtonDescription, ...] = (
         method_name="async_refresh_vehicle",
     ),
     LexusAUButtonDescription(
+        key="refresh_electric_status",
+        translation_key="refresh_electric_status",
+        icon="mdi:battery-sync",
+        method_name="async_refresh_electric_realtime_status",
+    ),
+    LexusAUButtonDescription(
+        key="refresh_recent_trips",
+        translation_key="refresh_recent_trips",
+        icon="mdi:map-refresh",
+        method_name="async_refresh_recent_trips",
+    ),
+    LexusAUButtonDescription(
         key="lock_doors",
         translation_key="lock_doors",
         icon="mdi:lock",

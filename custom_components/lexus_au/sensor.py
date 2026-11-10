@@ -18,6 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .coordinator import LexusAUCoordinator
 from .entity import LexusAUEntity
+from .sensor_extra import EXTRA_SENSOR_KEYS, LexusAUExtraSensor
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -152,7 +153,10 @@ async def async_setup_entry(
     """Set up Lexus AU status sensors."""
     coordinator: LexusAUCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        LexusAUSensor(coordinator, description) for description in SENSORS
+        [
+            *(LexusAUSensor(coordinator, description) for description in SENSORS),
+            *(LexusAUExtraSensor(coordinator, key) for key in EXTRA_SENSOR_KEYS),
+        ]
     )
 
 

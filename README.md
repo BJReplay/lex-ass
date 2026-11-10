@@ -73,6 +73,9 @@ flowchart LR
 | --- | --- |
 | Remote control | Refresh vehicle, lock doors, unlock doors, flash hazards, engine start, engine stop |
 | Trial actions | Lock boot, unlock boot, flash headlights, sound horn, buzzer warning |
+| Climate | Remote start/stop, target temperature, defrost presets, seat-heater levels, steering-wheel heater |
+| Electric status | Battery level and usable PHEV level, EV range, charging status, remaining charge time, manual status refresh |
+| Vehicle history | Configurable recent trips with route details, trip score, average speed, service history, notifications, warning lights |
 | Core status | Fuel level, distance to empty, odometer, trip A/B, caution count, last vehicle update |
 | Location | Last known vehicle location as a Home Assistant `device_tracker`, plus location timestamp/name when available |
 | Vehicle openings | Front doors, rear doors, front windows, rear windows, boot, bonnet, moonroof |

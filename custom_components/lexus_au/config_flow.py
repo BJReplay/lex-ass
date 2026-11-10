@@ -16,10 +16,13 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_LEXUS_API_KEY,
     CONF_LEXUS_X_API_KEY,
+    CONF_RECENT_TRIPS_LIMIT,
     CONF_REFRESH_INTERVAL_SECONDS,
     CONF_VIN,
+    DEFAULT_RECENT_TRIPS_LIMIT,
     DEFAULT_REFRESH_INTERVAL_SECONDS,
     DOMAIN,
+    MAX_RECENT_TRIPS_LIMIT,
     MIN_REFRESH_INTERVAL_SECONDS,
 )
 
@@ -83,6 +86,7 @@ class LexusAUConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         },
                         options={
                             CONF_REFRESH_INTERVAL_SECONDS: DEFAULT_REFRESH_INTERVAL_SECONDS,
+                            CONF_RECENT_TRIPS_LIMIT: DEFAULT_RECENT_TRIPS_LIMIT,
                         },
                     )
 
@@ -158,6 +162,15 @@ class LexusAUOptionsFlow(config_entries.OptionsFlow):
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=MIN_REFRESH_INTERVAL_SECONDS),
+                ),
+                vol.Required(
+                    CONF_RECENT_TRIPS_LIMIT,
+                    default=self._config_entry.options.get(
+                        CONF_RECENT_TRIPS_LIMIT, DEFAULT_RECENT_TRIPS_LIMIT
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=1, max=MAX_RECENT_TRIPS_LIMIT),
                 ),
                 vol.Required(
                     CONF_LEXUS_API_KEY,

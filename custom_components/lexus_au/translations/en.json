@@ -29,6 +29,7 @@
         "title": "Lexus Connected AU options",
         "data": {
           "refresh_interval_seconds": "Refresh interval (seconds)",
+          "recent_trips_limit": "Recent trips to keep",
           "lexus_api_key": "API key override",
           "lexus_x_api_key": "X-API key override"
         }
@@ -39,6 +40,12 @@
     "button": {
       "refresh_vehicle": {
         "name": "Refresh vehicle"
+      },
+      "refresh_electric_status": {
+        "name": "Refresh electric status"
+      },
+      "refresh_recent_trips": {
+        "name": "Refresh recent trips"
       },
       "lock_doors": {
         "name": "Lock doors"
@@ -105,6 +112,12 @@
       "moonroof": {
         "name": "Moonroof"
       },
+      "vehicle_health": {
+        "name": "Vehicle health problem"
+      },
+      "driving": {
+        "name": "Driving"
+      },
       "engine_running": {
         "name": "Engine running"
       }
@@ -112,6 +125,11 @@
     "device_tracker": {
       "vehicle_location": {
         "name": "Vehicle location"
+      }
+    },
+    "climate": {
+      "vehicle_climate": {
+        "name": "Climate"
       }
     },
     "lock": {
@@ -122,9 +140,68 @@
     "switch": {
       "vehicle_engine": {
         "name": "Vehicle engine"
+      },
+      "steering_heater": {
+        "name": "Steering wheel heater"
+      }
+    },
+    "select": {
+      "seat_heater_driver": {
+        "name": "Driver seat heater"
+      },
+      "seat_heater_passenger": {
+        "name": "Passenger seat heater"
+      },
+      "seat_heater_rear_driver": {
+        "name": "Rear driver seat heater"
+      },
+      "seat_heater_rear_passenger": {
+        "name": "Rear passenger seat heater"
       }
     },
     "sensor": {
+      "battery_level": {
+        "name": "Battery level"
+      },
+      "phev_usable_battery_level": {
+        "name": "Usable battery level"
+      },
+      "electric_range": {
+        "name": "Electric range"
+      },
+      "electric_range_with_ac": {
+        "name": "Electric range with climate"
+      },
+      "charging_status": {
+        "name": "Charging status"
+      },
+      "remaining_charge_time": {
+        "name": "Remaining charge time"
+      },
+      "last_service": {
+        "name": "Last service"
+      },
+      "service_history_count": {
+        "name": "Service history records"
+      },
+      "notification_count": {
+        "name": "Vehicle notifications"
+      },
+      "warning_lights": {
+        "name": "Warning lights"
+      },
+      "cabin_temperature": {
+        "name": "Cabin temperature"
+      },
+      "recent_trips": {
+        "name": "Recent trips"
+      },
+      "last_trip_score": {
+        "name": "Last trip score"
+      },
+      "average_speed_week": {
+        "name": "Average speed (recent trips)"
+      },
       "last_vehicle_update": {
         "name": "Last vehicle update"
       },
@@ -172,6 +249,16 @@
       },
       "last_tire_pressure_update": {
         "name": "Last tyre pressure update"
+      }
+    }
+  },
+  "state": {
+    "sensor": {
+      "charging_status": {
+        "charge_complete": "Charge complete",
+        "charging": "Charging",
+        "none": "Not charging",
+        "plugged": "Plugged in"
       }
     }
   }
