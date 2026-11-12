@@ -74,6 +74,8 @@ flowchart LR
 | Remote control | Refresh vehicle, lock doors, unlock doors, flash hazards, engine start, engine stop |
 | Trial actions | Lock boot, unlock boot, flash headlights, sound horn, buzzer warning |
 | Core status | Fuel level, distance to empty, odometer, trip A/B, caution count, last vehicle update |
+| Electric status | EV battery level, EV range, range with climate, combined fuel-and-EV total range, remaining charge time, and raw diagnostic status codes where reported |
+| Climate settings | Read-only target temperature and available climate-operation details |
 | Location | Last known vehicle location as a Home Assistant `device_tracker`, plus location timestamp/name when available |
 | Vehicle openings | Front doors, rear doors, front windows, rear windows, boot, bonnet, moonroof |
 | Tire data | Front left, front right, rear left, rear right, and spare tire pressure where reported |
@@ -84,10 +86,15 @@ flowchart LR
 - Lock the car automatically when the house switches to night mode.
 - Raise a notification if the boot, bonnet, or moonroof is still open after everyone leaves.
 - Surface tire pressure and odometer on a vehicle dashboard card.
+- Monitor EV battery percentage, electric range, and remaining charge time on
+  supported Lexus models.
 - Track tire pressure over time and spot a slow leak before it becomes an annoying surprise.
 - Show the Lexus on the Home Assistant map using the backend's last known location.
 - Flash hazards from a dashboard tile to find the car in a crowded car park.
 - Export explicit `Lock doors` and `Unlock doors` buttons through Home Assistant to HomeKit.
+
+Climate settings are read-only; remote climate-control commands are not
+implemented by these captured endpoints.
 - Build a morning scene that puts vehicle status next to weather, driveway presence, and charging information.
 
 ## Install with HACS

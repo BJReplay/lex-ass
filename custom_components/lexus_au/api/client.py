@@ -11,6 +11,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode, urlparse, parse_qs
+from uuid import uuid4
 
 import httpx
 
@@ -24,6 +25,7 @@ from .const import (
     AUTHORIZE_PATH,
     BRAND,
     CHANNEL,
+    CLIMATE_SETTINGS_PATH,
     CLIENT_ID,
     COMMAND_BUZZER_WARNING,
     COMMAND_DOOR_LOCK,
@@ -43,8 +45,14 @@ from .const import (
     DEVICE_STATUS_PATH,
     DEVICE_TIMEZONE,
     DEVICE_TYPE,
+    ELECTRIC_STATUS_PATH,
     LOCALE,
     OPENIDM_BASE_URL,
+    ONECDN_APP_VERSION,
+    ONECDN_BASE_URL,
+    ONECDN_OS_NAME,
+    ONECDN_OS_VERSION,
+    ONECDN_USER_AGENT,
     OS_NAME,
     OS_VERSION,
     PASSWORD_CHECK_PATH,
@@ -61,7 +69,14 @@ from .const import (
     VEHICLE_LOCATION_PATH,
 )
 from .exceptions import LexusAUAuthError, LexusAUProtocolError, LexusAURequestError
-from .models import LexusAUSnapshot, LexusAUStatus, LexusAUToken, LexusAUVehicleOverview
+from .models import (
+    LexusAUChargingStatus,
+    LexusAUClimateSettings,
+    LexusAUSnapshot,
+    LexusAUStatus,
+    LexusAUToken,
+    LexusAUVehicleOverview,
+)
 from .redact import redact_mapping
 
 LOGGER = logging.getLogger(__name__)
@@ -106,6 +121,8 @@ class LexusAUClient:
         self._telemetry_path: str | object = _UNSET
         self._location_supported = True
         self._engine_status_supported = True
+        self._electric_status_supported = True
+        self._climate_settings_supported = True
 
     async def async_close(self) -> None:
         """Close underlying HTTP resources."""
@@ -128,10 +145,41 @@ class LexusAUClient:
     async def async_get_snapshot(self) -> LexusAUSnapshot:
         """Fetch the current vehicle snapshot for Home Assistant."""
         status = await self.async_get_remote_status()
+        charging = await self._async_get_electric_status_best_effort()
+        climate_settings = await self._async_get_climate_settings_best_effort()
 
         await self._async_ensure_vehicle_overview()
 
-        return LexusAUSnapshot(vehicle=self._vehicle_overview, status=status)
+        return LexusAUSnapshot(
+            vehicle=self._vehicle_overview,
+            status=status,
+            charging=charging,
+            climate_settings=climate_settings,
+        )
+
+    async def async_get_electric_status(self) -> LexusAUChargingStatus:
+        """Fetch electric range and charging data."""
+        await self._async_ensure_vehicle_overview()
+        payload = await self._async_api_request(
+            "GET",
+            ELECTRIC_STATUS_PATH,
+            include_vin_header=True,
+            extra_headers=self._onecdn_headers(),
+            base_url=ONECDN_BASE_URL,
+        )
+        return LexusAUChargingStatus.from_payload(payload)
+
+    async def async_get_climate_settings(self) -> LexusAUClimateSettings:
+        """Fetch read-only remote climate settings and capabilities."""
+        await self._async_ensure_vehicle_overview()
+        payload = await self._async_api_request(
+            "GET",
+            CLIMATE_SETTINGS_PATH,
+            include_vin_header=True,
+            extra_headers=self._onecdn_headers(),
+            base_url=ONECDN_BASE_URL,
+        )
+        return LexusAUClimateSettings.from_payload(payload)
 
     async def async_get_vehicle_overview(self) -> LexusAUVehicleOverview:
         """Fetch vehicle metadata and cache it."""
@@ -374,9 +422,45 @@ class LexusAUClient:
             )
             return None
 
-    def _vehicle_metadata_headers(self) -> dict[str, str]:
+    async def _async_get_electric_status_best_effort(
+        self,
+    ) -> LexusAUChargingStatus | None:
+        """Fetch EV charge data when supported by this vehicle."""
+        if not self._electric_status_supported:
+            return None
+
+        try:
+            return await self.async_get_electric_status()
+        except LexusAURequestError as err:
+            self._electric_status_supported = False
+            LOGGER.debug("Electric-status request failed: %s", err)
+            return None
+        except httpx.HTTPError as err:
+            LOGGER.debug("Electric-status request could not be completed: %s", err)
+            return None
+
+    async def _async_get_climate_settings_best_effort(
+        self,
+    ) -> LexusAUClimateSettings | None:
+        """Fetch climate settings when supported by this vehicle."""
+        if not self._climate_settings_supported:
+            return None
+
+        try:
+            return await self.async_get_climate_settings()
+        except LexusAURequestError as err:
+            self._climate_settings_supported = False
+            LOGGER.debug("Climate-settings request failed: %s", err)
+            return None
+        except httpx.HTTPError as err:
+            LOGGER.debug("Climate-settings request could not be completed: %s", err)
+            return None
+
+    def _vehicle_metadata_headers(
+        self, *, include_vin_header: bool = True
+    ) -> dict[str, str]:
         """Build extra headers commonly required by vehicle-data endpoints."""
-        headers = {"VIN": self._vin}
+        headers = {"VIN": self._vin} if include_vin_header else {}
         region = self._vehicle_overview.raw.get("region")
         generation = self._vehicle_overview.raw.get("generation")
         if isinstance(region, str) and region:
@@ -384,6 +468,17 @@ class LexusAUClient:
         if isinstance(generation, str) and generation:
             headers["GENERATION"] = generation
         return headers
+
+    def _onecdn_headers(self) -> dict[str, str]:
+        """Build the Android app headers captured for the OneCDN endpoints."""
+        return {
+            **self._vehicle_metadata_headers(include_vin_header=False),
+            "User-Agent": ONECDN_USER_AGENT,
+            "X-Appversion": ONECDN_APP_VERSION,
+            "X-CorrelationId": str(uuid4()),
+            "X-Osname": ONECDN_OS_NAME,
+            "X-Osversion": ONECDN_OS_VERSION,
+        }
 
     async def async_login(self, *, force: bool = False) -> None:
         """Authenticate and ensure device registration."""
@@ -544,6 +639,7 @@ class LexusAUClient:
         extra_headers: dict[str, str] | None = None,
         json_body: dict[str, Any] | None = None,
         retry_on_auth_failure: bool = True,
+        base_url: str = API_BASE_URL,
     ) -> dict[str, Any]:
         """Send an authenticated AU telematics request."""
         await self.async_login()
@@ -553,7 +649,7 @@ class LexusAUClient:
             headers.update(extra_headers)
         response = await self._http.request(
             method,
-            f"{API_BASE_URL}{path}",
+            f"{base_url}{path}",
             headers=headers,
             json=json_body,
         )
@@ -568,6 +664,7 @@ class LexusAUClient:
                 extra_headers=extra_headers,
                 json_body=json_body,
                 retry_on_auth_failure=False,
+                base_url=base_url,
             )
 
         if response.status_code >= 400:

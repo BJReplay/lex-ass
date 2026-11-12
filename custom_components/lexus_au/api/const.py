@@ -3,6 +3,7 @@
 AUTH_BASE_URL = "https://login.lexusdriverslogin.com.au"
 OPENIDM_BASE_URL = "https://openidm.lexusdriverslogin.com.au"
 API_BASE_URL = "https://tmca-oneapi.telematicsct.com.au"
+ONECDN_BASE_URL = "https://onecdn.telematicsct.com.au"
 
 AUTHENTICATE_PATH = (
     "/json/realms/tmca/authenticate?authIndexType=service&authIndexValue=oneapp"
@@ -20,6 +21,8 @@ VEHICLE_GUID_PATH = "/v2/vehicle/guid"
 VEHICLE_LOCATION_PATH = "/v1/location"
 TELEMETRY_V2_PATH = "/v2/telemetry"
 TELEMETRY_V3_PATH = "/v3/telemetry"
+ELECTRIC_STATUS_PATH = "/oneapi/v3/electric/status"
+CLIMATE_SETTINGS_PATH = "/v1/remote/route/climate-settings"
 
 CLIENT_ID = "oneapp"
 REDIRECT_URI = "com.toyota.oneapp:/oauth2Callback"
@@ -38,6 +41,10 @@ DEVICE_MODEL = "iPad"
 APP_LABEL = "com.au.lexus.oneapp"
 BRAND = "L"
 CHANNEL = "ONEAPP"
+ONECDN_APP_VERSION = "13.6.0"
+ONECDN_USER_AGENT = "okhttp/5.3.2"
+ONECDN_OS_NAME = "Android"
+ONECDN_OS_VERSION = "15"
 
 COMMAND_DOOR_LOCK = "door-lock"
 COMMAND_DOOR_UNLOCK = "door-unlock"

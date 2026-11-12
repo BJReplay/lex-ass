@@ -172,6 +172,33 @@
       },
       "last_tire_pressure_update": {
         "name": "Last tyre pressure update"
+      },
+      "ev_battery_level": {
+        "name": "EV battery level"
+      },
+      "ev_range": {
+        "name": "EV range"
+      },
+      "ev_range_with_ac": {
+        "name": "EV range with climate"
+      },
+      "total_range": {
+        "name": "Total range"
+      },
+      "remaining_charge_time": {
+        "name": "Remaining charge time"
+      },
+      "plug_status_code": {
+        "name": "Plug status code"
+      },
+      "connector_status_code": {
+        "name": "Connector status code"
+      },
+      "charge_type_code": {
+        "name": "Charge type code"
+      },
+      "climate_target_temperature": {
+        "name": "Climate target temperature"
       }
     }
   }

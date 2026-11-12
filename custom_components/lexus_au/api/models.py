@@ -213,11 +213,203 @@ class LexusAUStatus:
 
 
 @dataclass(slots=True)
+class LexusAUChargingStatus:
+    """Charging and EV range values returned by the electric-status endpoint."""
+
+    battery_level: float | None = None
+    ev_range: float | None = None
+    ev_range_with_ac: float | None = None
+    ev_range_unit: str | None = None
+    remaining_charge_time: int | None = None
+    fuel_level: float | None = None
+    fuel_range: float | None = None
+    plug_status_code: int | None = None
+    connector_status_code: int | None = None
+    charge_type_code: int | None = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "LexusAUChargingStatus":
+        """Parse charging details from the captured Lexus AU response."""
+        body = _status_payload(payload)
+        vehicle_info = body.get("vehicleInfo")
+        charge_info = (
+            vehicle_info.get("chargeInfo")
+            if isinstance(vehicle_info, dict)
+            else body.get("chargeInfo")
+        )
+        if not isinstance(charge_info, dict):
+            return cls()
+
+        remaining_charge_time = _optional_int(charge_info.get("remainingChargeTime"))
+        if remaining_charge_time is not None and remaining_charge_time > 1440:
+            remaining_charge_time = None
+
+        return cls(
+            battery_level=_optional_number(charge_info.get("chargeRemainingAmount")),
+            ev_range=_optional_number(charge_info.get("evTravelableDistance")),
+            ev_range_with_ac=_optional_number(charge_info.get("evDistanceAC")),
+            ev_range_unit=_pick_first_string(charge_info, ("evDistanceUnit",)),
+            remaining_charge_time=remaining_charge_time,
+            fuel_level=_optional_number(charge_info.get("fuelGage")),
+            fuel_range=_optional_number(charge_info.get("gasolineTravelableDistance")),
+            plug_status_code=_optional_int(charge_info.get("plugStatus")),
+            connector_status_code=_optional_int(charge_info.get("connectorStatus")),
+            charge_type_code=_optional_int(charge_info.get("chargeType")),
+        )
+
+    @property
+    def total_range(self) -> float | None:
+        """Return gasoline range plus EV range with climate, when reported."""
+        ev_range = self.ev_range_with_ac
+        if ev_range is None and self.fuel_range is None:
+            return None
+        return (ev_range if ev_range is not None else 0) + (
+            self.fuel_range if self.fuel_range is not None else 0
+        )
+
+    @property
+    def total_range_unit(self) -> str | None:
+        """Return the vehicle's selected distance unit for the combined range."""
+        return self.ev_range_unit
+
+
+@dataclass(slots=True)
+class LexusAUClimateOperation:
+    """Availability and current enabled state of one climate operation."""
+
+    name: str
+    display_name: str | None = None
+    available: bool | None = None
+    enabled: bool | None = None
+
+
+@dataclass(slots=True)
+class LexusAUClimateOperationCategory:
+    """A group of climate operations such as defrost or seat heat."""
+
+    name: str
+    display_name: str | None = None
+    available: bool | None = None
+    operations: list[LexusAUClimateOperation] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class LexusAUClimateSettings:
+    """Read-only temperature and operation settings from the climate endpoint."""
+
+    temperature: float | None = None
+    temperature_unit: str | None = None
+    min_temperature: float | None = None
+    max_temperature: float | None = None
+    temperature_interval: float | None = None
+    settings_on: bool | None = None
+    extended_runtime_available: bool | None = None
+    extended_runtime_enabled: bool | None = None
+    operations: list[LexusAUClimateOperationCategory] = field(default_factory=list)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "LexusAUClimateSettings":
+        """Parse climate settings and their available operations."""
+        body = _status_payload(payload)
+        extended_runtime = body.get("extendedRuntime")
+        if not isinstance(extended_runtime, dict):
+            extended_runtime = {}
+
+        categories: list[LexusAUClimateOperationCategory] = []
+        raw_categories = body.get("acOperations")
+        if isinstance(raw_categories, list):
+            for raw_category in raw_categories:
+                if not isinstance(raw_category, dict):
+                    continue
+                category_name = raw_category.get("categoryName")
+                if not isinstance(category_name, str):
+                    continue
+
+                operations: list[LexusAUClimateOperation] = []
+                raw_operations = raw_category.get("acParameters")
+                if isinstance(raw_operations, list):
+                    for raw_operation in raw_operations:
+                        if not isinstance(raw_operation, dict):
+                            continue
+                        operation_name = raw_operation.get("name")
+                        if not isinstance(operation_name, str):
+                            continue
+                        operations.append(
+                            LexusAUClimateOperation(
+                                name=operation_name,
+                                display_name=_optional_string(
+                                    raw_operation.get("displayName")
+                                ),
+                                available=_optional_bool(
+                                    raw_operation.get("available")
+                                ),
+                                enabled=_optional_bool(raw_operation.get("enabled")),
+                            )
+                        )
+
+                categories.append(
+                    LexusAUClimateOperationCategory(
+                        name=category_name,
+                        display_name=_optional_string(
+                            raw_category.get("categoryDisplayName")
+                        ),
+                        available=_optional_bool(raw_category.get("available")),
+                        operations=operations,
+                    )
+                )
+
+        return cls(
+            temperature=_optional_number(body.get("temperature")),
+            temperature_unit=_optional_string(body.get("temperatureUnit")),
+            min_temperature=_optional_number(body.get("minTemp")),
+            max_temperature=_optional_number(body.get("maxTemp")),
+            temperature_interval=_optional_number(body.get("tempInterval")),
+            settings_on=_optional_bool(body.get("settingsOn")),
+            extended_runtime_available=_optional_bool(
+                extended_runtime.get("available")
+            ),
+            extended_runtime_enabled=_optional_bool(extended_runtime.get("enabled")),
+            operations=categories,
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return serializable read-only climate capabilities for Home Assistant."""
+        return {
+            "settings_on": self.settings_on,
+            "min_temperature": self.min_temperature,
+            "max_temperature": self.max_temperature,
+            "temperature_interval": self.temperature_interval,
+            "extended_runtime_available": self.extended_runtime_available,
+            "extended_runtime_enabled": self.extended_runtime_enabled,
+            "ac_operations": [
+                {
+                    "name": category.name,
+                    "display_name": category.display_name,
+                    "available": category.available,
+                    "operations": [
+                        {
+                            "name": operation.name,
+                            "display_name": operation.display_name,
+                            "available": operation.available,
+                            "enabled": operation.enabled,
+                        }
+                        for operation in category.operations
+                    ],
+                }
+                for category in self.operations
+            ],
+        }
+
+
+@dataclass(slots=True)
 class LexusAUSnapshot:
     """Coordinator payload for Home Assistant."""
 
     vehicle: LexusAUVehicleOverview
     status: LexusAUStatus
+    charging: LexusAUChargingStatus | None = None
+    climate_settings: LexusAUClimateSettings | None = None
     refresh_request: dict[str, Any] | None = None
 
 
@@ -250,6 +442,35 @@ def _pick_first_string(candidate: dict[str, Any], keys: tuple[str, ...]) -> str 
         value = candidate.get(key)
         if isinstance(value, str) and value:
             return value
+    return None
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _optional_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
     return None
 
 

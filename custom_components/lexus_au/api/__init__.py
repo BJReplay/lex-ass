@@ -7,10 +7,19 @@ from .exceptions import (
     LexusAUProtocolError,
     LexusAURequestError,
 )
-from .models import LexusAUSnapshot, LexusAUStatus, LexusAUToken, LexusAUVehicleOverview
+from .models import (
+    LexusAUChargingStatus,
+    LexusAUClimateSettings,
+    LexusAUSnapshot,
+    LexusAUStatus,
+    LexusAUToken,
+    LexusAUVehicleOverview,
+)
 
 __all__ = [
     "LexusAUAuthError",
+    "LexusAUChargingStatus",
+    "LexusAUClimateSettings",
     "LexusAUClient",
     "LexusAUError",
     "LexusAUProtocolError",
