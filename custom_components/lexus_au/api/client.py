@@ -464,9 +464,9 @@ class LexusAUClient:
         region = self._vehicle_overview.raw.get("region")
         generation = self._vehicle_overview.raw.get("generation")
         if isinstance(region, str) and region:
-            headers["x-region"] = region
+            headers["X-REGION"] = region
         if isinstance(generation, str) and generation:
-            headers["GENERATION"] = generation
+            headers["X-GENERATION"] = generation
         return headers
 
     def _onecdn_headers(self) -> dict[str, str]:
@@ -474,10 +474,10 @@ class LexusAUClient:
         return {
             **self._vehicle_metadata_headers(include_vin_header=False),
             "User-Agent": ONECDN_USER_AGENT,
-            "X-Appversion": ONECDN_APP_VERSION,
-            "X-CorrelationId": str(uuid4()),
-            "X-Osname": ONECDN_OS_NAME,
-            "X-Osversion": ONECDN_OS_VERSION,
+            "X-APPVERSION": ONECDN_APP_VERSION,
+            "X-CORRELATIONID": str(uuid4()),
+            "X-OSNAME": ONECDN_OS_NAME,
+            "X-OSVERSION": ONECDN_OS_VERSION,
         }
 
     async def async_login(self, *, force: bool = False) -> None:
@@ -872,7 +872,7 @@ class LexusAUClient:
             "X-Osversion": OS_VERSION,
         }
         if include_vin_header:
-            headers["Vin"] = self._vin
+            headers["vin"] = self._vin
         return headers
 
 

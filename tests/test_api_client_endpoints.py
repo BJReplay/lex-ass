@@ -104,7 +104,8 @@ class TestOneCDNEndpoints(unittest.IsolatedAsyncioTestCase):
                 request.headers.get_list("VIN"),
                 ["TESTVIN0000000001"],
             )
-            self.assertEqual(request.headers["GENERATION"], "21MM")
+            self.assertEqual(request.headers["X-Generation"], "21MM")
+            self.assertNotIn("GENERATION", request.headers)
             self.assertEqual(request.headers["User-Agent"], "okhttp/5.3.2")
             UUID(request.headers["X-CorrelationId"])
 
