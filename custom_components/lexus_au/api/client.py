@@ -647,6 +647,10 @@ class LexusAUClient:
         headers = self._api_headers(include_vin_header=include_vin_header)
         if extra_headers:
             headers.update(extra_headers)
+        if base_url == ONECDN_BASE_URL:
+            for name in ("Accept", "Accept-Language", "Adrum", "Adrum_1", "X-REGION"):
+                headers.pop(name, None)
+            headers["Accept-Encoding"] = "gzip"
         response = await self._http.request(
             method,
             f"{base_url}{path}",

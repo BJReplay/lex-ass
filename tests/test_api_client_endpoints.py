@@ -77,7 +77,7 @@ class TestOneCDNEndpoints(unittest.IsolatedAsyncioTestCase):
             subject="test-guid",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
-        self.client._vehicle_overview.raw = {"generation": "21MM"}
+        self.client._vehicle_overview.raw = {"generation": "21MM", "region": "AU"}
 
     async def asyncTearDown(self) -> None:
         await self.client.async_close()
@@ -107,6 +107,15 @@ class TestOneCDNEndpoints(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.headers["X-Generation"], "21MM")
             self.assertNotIn("GENERATION", request.headers)
             self.assertEqual(request.headers["User-Agent"], "okhttp/5.3.2")
+            self.assertEqual(request.headers["Accept-Encoding"], "gzip")
+            for header in (
+                "Accept",
+                "Accept-Language",
+                "Adrum",
+                "Adrum_1",
+                "X-Region",
+            ):
+                self.assertNotIn(header, request.headers)
             UUID(request.headers["X-CorrelationId"])
 
         self.assertEqual(charging.battery_level, 93)
